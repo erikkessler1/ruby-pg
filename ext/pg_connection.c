@@ -23,6 +23,9 @@ static void pgconn_set_internal_encoding_index( VALUE );
 static const rb_data_type_t pg_connection_type;
 static VALUE pgconn_async_flush(VALUE self);
 
+static int ek_dbg = 0;
+static FILE *log_file = NULL;
+
 /*
  * Global functions
  */
@@ -291,6 +294,13 @@ pgconn_s_sync_connect(int argc, VALUE *argv, VALUE klass)
 		return rb_ensure(rb_yield, self, pgconn_finish, self);
 	}
 	return self;
+}
+
+static VALUE
+pgconn_ek_dbg(VALUE klass)
+{
+  log_file = fopen("log/ekpg.log", "a");
+  ek_dbg = 1;
 }
 
 /*
@@ -1863,12 +1873,33 @@ pgconn_send_query(int argc, VALUE *argv, VALUE self)
 {
 	t_pg_connection *this = pg_get_connection_safe( self );
 
+        if (ek_dbg) {
+        	fprintf(log_file, "sq1\n");
+        	fflush(log_file);
+        }
+
 	/* If called with no or nil parameters, use PQexec for compatibility */
 	if ( argc == 1 || (argc >= 2 && argc <= 4 && NIL_P(argv[1]) )) {
+                if (ek_dbg) {
+                  fprintf(log_file, "sq2\n");
+                  fflush(log_file);
+                }
+
 		if(gvl_PQsendQuery(this->pgconn, pg_cstr_enc(argv[0], this->enc_idx)) == 0)
 			pg_raise_conn_error( rb_eUnableToSend, self, "%s", PQerrorMessage(this->pgconn));
 
-		pgconn_wait_for_flush( self );
+                if (ek_dbg) {
+                  fprintf(log_file, "sq3\n");
+                  fflush(log_file);
+                }
+
+                pgconn_wait_for_flush( self );
+
+                if (ek_dbg) {
+        	        fprintf(log_file, "sq4\n");
+        	        fflush(log_file);
+                }
+                
 		return Qnil;
 	}
 
@@ -3124,12 +3155,27 @@ pgconn_async_get_last_result(VALUE self)
 	VALUE rb_pgresult = Qnil;
 	PGresult *cur, *prev;
 
+        if (ek_dbg) {
+        	fprintf(log_file, "aglr1\n");
+        	fflush(log_file);
+        }
+
 	cur = prev = NULL;
 	for(;;) {
 		int status;
 
+                if (ek_dbg) {
+                  fprintf(log_file, "aglr2\n");
+                  fflush(log_file);
+                }
+
 		/* wait for input (without blocking) before reading each result */
 		wait_socket_readable(self, NULL, get_result_readable);
+
+                if (ek_dbg) {
+                  fprintf(log_file, "aglr3\n");
+                  fflush(log_file);
+                }
 
 		cur = gvl_PQgetResult(conn);
 		if (cur == NULL)
@@ -3147,6 +3193,11 @@ pgconn_async_get_last_result(VALUE self)
 		rb_pgresult = pg_new_result( prev, self );
 		pg_result_check(rb_pgresult);
 	}
+
+        if (ek_dbg) {
+        	fprintf(log_file, "aglr4\n");
+        	fflush(log_file);
+        }
 
 	return rb_pgresult;
 }
@@ -3276,6 +3327,10 @@ pgconn_async_exec(int argc, VALUE *argv, VALUE self)
 {
 	VALUE rb_pgresult = Qnil;
 
+        if (ek_dbg) {
+        	fprintf(log_file, "ae1\n");
+        	fflush(log_file);
+        }
 	pgconn_discard_results( self );
 	pgconn_send_query( argc, argv, self );
 	rb_pgresult = pgconn_async_get_last_result( self );
@@ -3283,6 +3338,10 @@ pgconn_async_exec(int argc, VALUE *argv, VALUE self)
 	if ( rb_block_given_p() ) {
 		return rb_ensure( rb_yield, rb_pgresult, pg_result_clear, rb_pgresult );
 	}
+        if (ek_dbg) {
+        	fprintf(log_file, "ae2\n\n");
+                fflush(log_file);
+        }
 	return rb_pgresult;
 }
 
@@ -3341,6 +3400,10 @@ static VALUE
 pgconn_async_exec_params(int argc, VALUE *argv, VALUE self)
 {
 	VALUE rb_pgresult = Qnil;
+        if (ek_dbg) {
+        	fprintf(log_file, "aep1\n");
+        	fflush(log_file);
+        }
 
 	pgconn_discard_results( self );
 	/* If called with no or nil parameters, use PQsendQuery for compatibility */
@@ -3355,7 +3418,11 @@ pgconn_async_exec_params(int argc, VALUE *argv, VALUE self)
 	if ( rb_block_given_p() ) {
 		return rb_ensure( rb_yield, rb_pgresult, pg_result_clear, rb_pgresult );
 	}
-	return rb_pgresult;
+        if (ek_dbg) {
+        	fprintf(log_file, "aep2\n");
+        	fflush(log_file);
+        }
+        return rb_pgresult;
 }
 
 
@@ -4667,4 +4734,6 @@ init_pg_connection(void)
 
 	rb_define_method(rb_cPGconn, "field_name_type=", pgconn_field_name_type_set, 1 );
 	rb_define_method(rb_cPGconn, "field_name_type", pgconn_field_name_type_get, 0 );
+
+        rb_define_singleton_method(rb_cPGconn, "ek_dbg", pgconn_ek_dbg, 0);
 }
